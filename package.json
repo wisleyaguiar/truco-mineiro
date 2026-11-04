@@ -1,0 +1,23 @@
+{
+  "name": "truco-mineiro",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm -w @truco/client run dev",
+    "build": "npm run typecheck && npm -w @truco/client run build",
+    "preview": "npm -w @truco/client run preview",
+    "typecheck": "tsc -p packages/engine && tsc -p packages/bots && tsc -p apps/client",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.1"
+  }
+}
