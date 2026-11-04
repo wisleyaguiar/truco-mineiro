@@ -9,9 +9,11 @@ import {
   type Card,
   type PlayerView,
   type RoundWinner,
+  type Seat,
   type Team,
 } from '@truco/engine';
 import { PERSONALITIES, type Personality, type PersonalityId } from './personalities.ts';
+import { believedBest, type Knowledge } from './signals.ts';
 
 // Distribuição de forças do baralho: fração de cartas estritamente mais fracas que `s`.
 const DECK_STRENGTHS = createDeck().map((c) => cardStrength(c));
@@ -33,9 +35,37 @@ interface TableInfo {
   bestPartner: number; // -1 se parceiro não jogou
   oppsToPlay: number;
   partnerToPlay: boolean;
+  /** Força que acreditamos que o parceiro tem (via sinal), se ele ainda vai jogar. */
+  partnerKnown: number | null;
+  /** Maior força que acreditamos que algum adversário que ainda vai jogar tem (via sinal interceptado). */
+  oppKnown: number | null;
+  /** Quantos adversários que ainda vão jogar têm carta conhecida. */
+  oppKnownCount: number;
 }
 
-function tableInfo(view: PlayerView): TableInfo {
+const EMPTY_TABLE: TableInfo = {
+  bestOpp: -1,
+  bestPartner: -1,
+  oppsToPlay: 2,
+  partnerToPlay: true,
+  partnerKnown: null,
+  oppKnown: null,
+  oppKnownCount: 0,
+};
+
+/** Mesa vazia (vazas futuras), opcionalmente levando em conta o que sabemos por sinais. */
+function futureTable(view: PlayerView, k?: Knowledge): TableInfo {
+  const opps = ([0, 1, 2, 3] as Seat[]).filter((s) => teamOf(s) !== view.team);
+  const known = opps.map((s) => believedBest(k, s)).filter((x): x is number => x !== null);
+  return {
+    ...EMPTY_TABLE,
+    partnerKnown: believedBest(k, partnerOf(view.seat)),
+    oppKnown: known.length ? Math.max(...known) : null,
+    oppKnownCount: known.length,
+  };
+}
+
+function tableInfo(view: PlayerView, k?: Knowledge): TableInfo {
   const round = view.rounds[view.currentRound];
   const plays = round?.plays ?? [];
   let bestOpp = -1;
@@ -52,15 +82,32 @@ function tableInfo(view: PlayerView): TableInfo {
       bestOpp = Math.max(bestOpp, st);
     }
   }
-  return { bestOpp, bestPartner, oppsToPlay: 2 - oppsPlayed, partnerToPlay: !partnerPlayed };
+  const playedSeats = new Set(plays.map((p) => p.seat));
+  const oppsLeft = ([0, 1, 2, 3] as Seat[]).filter((s) => teamOf(s) !== view.team && !playedSeats.has(s));
+  const known = oppsLeft.map((s) => believedBest(k, s)).filter((x): x is number => x !== null);
+  return {
+    bestOpp,
+    bestPartner,
+    oppsToPlay: 2 - oppsPlayed,
+    partnerToPlay: !partnerPlayed,
+    partnerKnown: partnerPlayed ? null : believedBest(k, partnerOf(view.seat)),
+    oppKnown: known.length ? Math.max(...known) : null,
+    oppKnownCount: known.length,
+  };
 }
 
 /** Chance da minha dupla levar a vaza atual jogando uma carta de força `s`. */
 function roundChance(s: number, t: TableInfo): number {
+  // Adversários com carta conhecida (sinal interceptado) contam como já jogados com essa carta.
+  const oppFloor = Math.max(t.bestOpp, t.oppKnown ?? -1);
+  const unknownOpps = Math.max(0, t.oppsToPlay - t.oppKnownCount);
+  const chanceWith = (x: number) => (oppFloor >= x ? 0 : beatsUnknown(x, unknownOpps));
   // Se o parceiro já está ganhando, consideramos a carta dele também.
-  const mine = Math.max(s, t.bestPartner);
-  let p = t.bestOpp >= mine ? 0 : beatsUnknown(mine, t.oppsToPlay);
-  if (t.partnerToPlay) p = 1 - (1 - p) * (1 - PARTNER_UNKNOWN);
+  let p = chanceWith(Math.max(s, t.bestPartner));
+  if (t.partnerToPlay) {
+    const partnerP = t.partnerKnown !== null ? chanceWith(t.partnerKnown) : PARTNER_UNKNOWN;
+    p = 1 - (1 - p) * (1 - partnerP);
+  }
   return p;
 }
 
@@ -82,16 +129,17 @@ function myCards(view: PlayerView): Card[] {
 }
 
 /** Estimativa (0..1) de a minha dupla vencer a mão. */
-export function estimateHandChance(view: PlayerView): number {
+export function estimateHandChance(view: PlayerView, k?: Knowledge): number {
   const cards = myCards(view);
   if (cards.length === 0) return 0.5;
   const strengths = cards.map((c) => cardStrength(c)).sort((a, b) => b - a);
   const done = view.rounds.filter((r) => r.winner !== null).map((r) => r.winner!) as RoundWinner[];
-  const t = tableInfo(view);
+  const t = tableInfo(view, k);
   const future: number[] = [];
   future.push(roundChance(strengths[0]!, t));
-  const empty: TableInfo = { bestOpp: -1, bestPartner: -1, oppsToPlay: 2, partnerToPlay: true };
-  for (let i = 1; i < strengths.length; i++) future.push(roundChance(strengths[i]!, empty));
+  // Nas vazas seguintes, o que sabemos por sinais vale só para a próxima (a carta forte é gasta uma vez).
+  const next = futureTable(view, k);
+  for (let i = 1; i < strengths.length; i++) future.push(roundChance(strengths[i]!, i === 1 ? next : EMPTY_TABLE));
   return handChanceFrom(done, future.slice(0, 3 - done.length), view.team);
 }
 
@@ -99,7 +147,7 @@ function pick<T>(arr: T[], rng: () => number): T {
   return arr[Math.floor(rng() * arr.length)]!;
 }
 
-function playAction(view: PlayerView, legal: Action[], p: Personality, rng: () => number): Action {
+function playAction(view: PlayerView, legal: Action[], p: Personality, rng: () => number, k?: Knowledge): Action {
   const plays = legal.filter((a): a is Extract<Action, { type: 'play' }> => a.type === 'play');
   const faceUp = plays.filter((a) => !a.faceDown);
   const canCover = plays.some((a) => a.faceDown);
@@ -113,7 +161,7 @@ function playAction(view: PlayerView, legal: Action[], p: Personality, rng: () =
   const asc = [...idx].sort((a, b) => str(a) - str(b));
   const lowest = asc[0]!;
   const highest = asc[asc.length - 1]!;
-  const t = tableInfo(view);
+  const t = tableInfo(view, k);
   const leading = (view.rounds[view.currentRound]?.plays.length ?? 0) === 0;
   const round = view.currentRound;
   const hasZap = cards.some((c) => c.id === '4-paus');
@@ -123,7 +171,12 @@ function playAction(view: PlayerView, legal: Action[], p: Personality, rng: () =
     return { type: 'play', index: i };
   };
 
+  // Parceiro sinalizou manilha forte e ainda vai jogar: não gasta carta boa, deixa com ele.
+  const oppFloor = Math.max(t.bestOpp, t.oppKnown ?? -1);
+  const partnerCovers = t.partnerToPlay && t.partnerKnown !== null && t.partnerKnown >= 10 && t.partnerKnown > oppFloor;
+
   if (leading) {
+    if (partnerCovers && round === 0 && asc.length >= 2) return { type: 'play', index: asc[0]! };
     if (round === 0) {
       if (asc.length >= 2) {
         const middle = asc[asc.length - 2]!;
@@ -147,6 +200,8 @@ function playAction(view: PlayerView, legal: Action[], p: Personality, rng: () =
     return throwAway(lowest);
   }
 
+  if (partnerCovers) return throwAway(lowest);
+
   // Precisa ganhar da maior carta adversária
   const winners = asc.filter((i) => str(i) > t.bestOpp);
   if (winners.length) {
@@ -165,8 +220,8 @@ function hasManilha(view: PlayerView): boolean {
   return myCards(view).some(isManilha);
 }
 
-function trucoDecision(view: PlayerView, p: Personality, rng: () => number): boolean {
-  const chance = estimateHandChance(view);
+function trucoDecision(view: PlayerView, p: Personality, rng: () => number, k?: Knowledge): boolean {
+  const chance = estimateHandChance(view, k);
   const cards = myCards(view);
   const allLow = cards.length > 0 && cards.every((c) => cardStrength(c) <= 3);
   // Mais agressivo quando o adversário está perto de ganhar (pouco a perder).
@@ -183,13 +238,13 @@ function trucoDecision(view: PlayerView, p: Personality, rng: () => number): boo
   return rng() < p.bluffRate * 0.25;
 }
 
-function responseDecision(view: PlayerView, legal: Action[], p: Personality, rng: () => number): Action {
+function responseDecision(view: PlayerView, legal: Action[], p: Personality, rng: () => number, k?: Knowledge): Action {
   const bet = view.pendingBet!;
   const ladder = view.config.betLadder;
   const previous = ladder[ladder.indexOf(bet.value) - 1] ?? view.value;
   const oppTeam = (1 - view.team) as Team;
   const target = view.config.targetScore;
-  let chance = estimateHandChance(view);
+  let chance = estimateHandChance(view, k);
   // Desconfia de quem grita: puxa a estimativa para baixo um pouco.
   if (p.id === 'desconfiado') chance -= 0.04;
   if (p.id === 'blefe') chance += 0.04;
@@ -215,7 +270,7 @@ function maoDe10Decision(view: PlayerView, p: Personality): boolean {
   const a = mine.sort((x, y) => y - x);
   const b = partner.sort((x, y) => y - x);
   // Em cada vaza, a dupla usa a melhor carta disponível de cada um.
-  const empty: TableInfo = { bestOpp: -1, bestPartner: -1, oppsToPlay: 2, partnerToPlay: false };
+  const empty: TableInfo = { ...EMPTY_TABLE, partnerToPlay: false };
   const future = [0, 1, 2].map((i) => {
     const pa = roundChance(a[i] ?? 0, empty);
     const pb = roundChance(b[i] ?? 0, empty);
@@ -238,14 +293,15 @@ export function decideAction(
   legal: Action[],
   personality: Personality | PersonalityId = 'equilibrado',
   rng: () => number = Math.random,
+  knowledge?: Knowledge,
 ): Action {
   if (legal.length === 0) throw new Error('Bot sem ações válidas');
   const p = typeof personality === 'string' ? PERSONALITIES[personality] : personality;
 
   if (view.phase === 'mao_de_10_decision') return { type: 'mao10', play: maoDe10Decision(view, p) };
-  if (view.phase === 'bet_response') return responseDecision(view, legal, p, rng);
+  if (view.phase === 'bet_response') return responseDecision(view, legal, p, rng, knowledge);
 
-  if (legal.some((a) => a.type === 'truco') && trucoDecision(view, p, rng)) return { type: 'truco' };
-  return playAction(view, legal, p, rng);
+  if (legal.some((a) => a.type === 'truco') && trucoDecision(view, p, rng, knowledge)) return { type: 'truco' };
+  return playAction(view, legal, p, rng, knowledge);
 }
 

@@ -1,5 +1,6 @@
 // HUD em DOM/CSS sobre o canvas 3D.
 import type { Card, PlayerView, RoundWinner, Seat, Team } from '@truco/engine';
+import { SIGNAL_ORDER, SIGNALS, type SignalId } from '@truco/bots';
 import { cardImageURL } from '../scene/cardArt.ts';
 
 export interface HudHandlers {
@@ -10,6 +11,7 @@ export interface HudHandlers {
   onRespond: (r: 'accept' | 'run' | 'raise') => void;
   onMao10: (play: boolean) => void;
   onToggleMute: () => boolean;
+  onSignal: (s: SignalId) => void;
 }
 
 export interface HudState {
@@ -19,6 +21,7 @@ export interface HudState {
   canCover: boolean;
   coverOn: boolean;
   status: string;
+  canSignal: boolean;
 }
 
 type Anchor = (seat: Seat) => { x: number; y: number; visible: boolean };
@@ -48,6 +51,9 @@ export class Hud {
   private trucoBtn!: HTMLButtonElement;
   private coverBtn!: HTMLButtonElement;
   private muteBtn!: HTMLButtonElement;
+  private signalBtn!: HTMLButtonElement;
+  private wheel!: HTMLElement;
+  private pops = new Map<Seat, HTMLElement>();
   private modal!: HTMLElement;
   private toastEl!: HTMLElement;
   private toastTimer = 0;
@@ -91,6 +97,9 @@ export class Hud {
         const tag = el('div', 'tag');
         this.root.appendChild(tag);
         this.tags.set(seat, tag);
+        const pop = el('div', 'pop');
+        this.root.appendChild(pop);
+        this.pops.set(seat, pop);
       }
       const bubble = el('div', `bubble seat${seat}`);
       this.root.appendChild(bubble);
@@ -111,9 +120,15 @@ export class Hud {
       const m = this.h.onToggleMute();
       this.muteBtn.textContent = m ? '🔇' : '🔊';
     };
+    this.signalBtn = el('button', 'btn ghost', 'Sinais');
+    this.signalBtn.title = 'Fazer um sinal secreto pro parceiro (teclas 1 a 6). Cuidado com quem está te olhando!';
+    this.signalBtn.onclick = () => this.toggleWheel();
     const actions = el('div', 'actions');
-    actions.append(this.coverBtn, this.trucoBtn);
-    bar.append(this.muteBtn, this.statusEl, actions);
+    actions.append(this.signalBtn, this.coverBtn, this.trucoBtn);
+    this.buildWheel();
+    this.muteBtn.classList.add('mute');
+    this.root.appendChild(this.muteBtn);
+    bar.append(this.statusEl, actions);
     this.root.appendChild(bar);
 
     this.toastEl = el('div', 'toast');
@@ -125,7 +140,44 @@ export class Hud {
     window.addEventListener('keydown', (e) => {
       if (e.key === 't' || e.key === 'T') this.trucoBtn.click();
       if (e.key === 'c' || e.key === 'C') this.coverBtn.click();
+      if (e.key === 'Escape') this.toggleWheel(false);
+      const n = Number(e.key);
+      if (n >= 1 && n <= 6 && !this.signalBtn.disabled) {
+        this.toggleWheel(false);
+        this.h.onSignal(SIGNAL_ORDER[n - 1]!);
+      }
     });
+  }
+
+  private buildWheel() {
+    this.wheel = el('div', 'wheel hidden');
+    const ring = el('div', 'ring');
+    SIGNAL_ORDER.forEach((id, i) => {
+      const s = SIGNALS[id];
+      const angle = (i / SIGNAL_ORDER.length) * Math.PI * 2 - Math.PI / 2;
+      const b = el('button', 'sig', `<span class="e">${s.emoji}</span><span class="n">${s.label}</span><kbd>${i + 1}</kbd>`);
+      b.style.setProperty('--x', `${Math.cos(angle) * 96}px`);
+      b.style.setProperty('--y', `${Math.sin(angle) * 96}px`);
+      b.title = `${s.label}: ${s.gesture}`;
+      b.dataset.sig = id;
+      b.onclick = () => {
+        this.toggleWheel(false);
+        this.h.onSignal(id);
+      };
+      ring.appendChild(b);
+    });
+    const hint = el('div', 'hint', 'Olho aceso = ele está te olhando.<br>Sinal visto por adversário é sinal entregado!');
+    ring.appendChild(hint);
+    this.wheel.appendChild(ring);
+    this.wheel.onclick = (e) => {
+      if (e.target === this.wheel) this.toggleWheel(false);
+    };
+    this.root.appendChild(this.wheel);
+  }
+
+  toggleWheel(open?: boolean) {
+    const willOpen = open ?? this.wheel.classList.contains('hidden');
+    this.wheel.classList.toggle('hidden', !willOpen || this.signalBtn.disabled);
   }
 
   setAnchor(fn: Anchor) {
@@ -134,7 +186,9 @@ export class Hud {
 
   setNames(names: Record<Seat, string>, roles: Record<Seat, string>) {
     for (const [seat, tag] of this.tags) {
-      tag.innerHTML = `<span class="ia">IA</span> ${esc(names[seat])}<small>${esc(roles[seat])}</small>`;
+      // O olho só importa para adversários (o parceiro sempre recebe seus sinais).
+      const eye = seat % 2 === 1 ? '<span class="eye" title="Aceso = está te olhando">👁</span>' : '';
+      tag.innerHTML = `<span class="ia">IA</span> ${esc(names[seat])}<small>${esc(roles[seat])}</small>${eye}`;
     }
   }
 
@@ -147,9 +201,15 @@ export class Hud {
         tag.style.transform = `translate(${a.x}px, ${a.y}px) translate(-50%, -100%)`;
         tag.style.opacity = a.visible ? '1' : '0';
       }
+      const pop = this.pops.get(seat);
+      if (pop) pop.style.transform = `translate(${a.x}px, ${a.y + 46}px) translate(-50%, -50%)`;
       const b = this.bubbles.get(seat)!;
       const y = seat === 0 ? a.y : a.y - 34;
-      b.style.transform = `translate(${a.x}px, ${y}px) translate(-50%, -100%)`;
+      // Mantém o balão inteiro dentro da tela.
+      const half = b.offsetWidth / 2;
+      const vw = this.root.clientWidth;
+      const x = Math.min(vw - half - 8, Math.max(half + 8, a.x));
+      b.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
     }
   }
 
@@ -179,6 +239,8 @@ export class Hud {
     this.trucoBtn.classList.toggle('pulse', s.canTruco);
     this.coverBtn.disabled = !s.canCover;
     this.coverBtn.classList.toggle('on', s.coverOn && s.canCover);
+    this.signalBtn.disabled = !s.canSignal;
+    if (!s.canSignal) this.toggleWheel(false);
     this.statusEl.textContent = s.status;
     this.statusEl.classList.toggle('mine', s.myTurn);
   }
@@ -195,6 +257,21 @@ export class Hud {
     };
     bump(this.scoreUs, us);
     bump(this.scoreThem, them);
+  }
+
+  /** Liga o "olho" na plaquinha do adversário que está te olhando. */
+  setWatching(seat: Seat, watching: boolean) {
+    this.tags.get(seat)?.classList.toggle('watching', watching);
+  }
+
+  /** Emoji rápido perto do rosto de um bot (ajuda a perceber o sinal em telas pequenas). */
+  pop(seat: Seat, emoji: string) {
+    const p = this.pops.get(seat);
+    if (!p) return;
+    p.textContent = emoji;
+    p.classList.remove('show');
+    void p.offsetWidth;
+    p.classList.add('show');
   }
 
   setRoundDot(i: number, winner: RoundWinner | null, us: Team) {
@@ -286,6 +363,7 @@ export class Hud {
          <li>Depois: 3 › 2 › A › K › J › Q › 7 › 6 › 5 › 4.</li>
          <li>Mão vale 2. Truco 4 · Seis 6 · Dez 10 · Doze 12.</li>
          <li>Clique na carta pra jogar. Botão direito (ou <b>Coberta</b>) joga virada, a partir da 2ª rodada.</li>
+         <li><b>Sinais</b> (teclas 1–6): 😉 Zap · 😗 Copeta · 😛 Espadilha · 🤷 Pica-fumo · ✋ Três · 😑 Cego. Se um adversário estiver te olhando (👁 aceso), ele pega o sinal!</li>
        </ul>
        <div class="row"><button class="btn truco big" data-go>Bora jogar!</button></div>`,
       'start',

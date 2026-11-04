@@ -16,6 +16,7 @@ const LINES = {
   mao10_run: ['Essa não dá não... corremo.', 'Melhor correr dessa.'],
   win_round: ['Essa é nossa!', 'Levei!', 'Pode recolher!'],
   ferro: ['Mão de ferro! Todo mundo no escuro!', 'Agora é na sorte, uai!'],
+  caught: ['Vi esse sinal aí, hein!', 'Hmm... te peguei!', 'Sinalzinho manjado, sô!', 'Ô trem descarado!'],
 } as const;
 
 export type LineKind = keyof typeof LINES;
