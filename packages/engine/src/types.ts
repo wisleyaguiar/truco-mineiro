@@ -36,8 +36,8 @@ export interface MatchConfig {
   /** Assento do primeiro dealer. Padrão 3 (assento 0 começa). */
   firstDealer: Seat;
   /**
-   * Valor da Mão de 10 quando a dupla decide jogar. Padrão 2 (PRD).
-   * Obs.: com 2, correr nunca compensa (perde 2 de qualquer jeito). Alguns jogam valendo 4.
+   * Valor da Mão de 10 quando a dupla decide jogar. Padrão 4 (correr dá 2 ao adversário).
+   * Obs.: o PRD previa 2, mas com 2 correr nunca compensa (perde 2 de qualquer jeito).
    */
   maoDe10Value: number;
 }

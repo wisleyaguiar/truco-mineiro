@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG: MatchConfig = {
   betLadder: [2, 4, 6, 10, 12],
   maoDeFerro: 'cega',
   firstDealer: 3,
-  maoDe10Value: 2,
+  maoDe10Value: 4,
 };
 
 function clone<T>(v: T): T {

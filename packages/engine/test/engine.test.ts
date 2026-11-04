@@ -293,12 +293,12 @@ describe('Mão de 10', () => {
     expect(r.state.scores).toEqual([10, 6]);
   });
 
-  it('jogar segue valendo 2 e esconde a mão do parceiro', () => {
+  it('jogar vale 4 e esconde a mão do parceiro', () => {
     let st = setup(BASIC, opts);
     // dealer agora é 0 → assento 1 começa
     st = act(st, 2, { type: 'mao10', play: true });
     expect(st.phase).toBe('playing');
-    expect(st.hand.value).toBe(2);
+    expect(st.hand.value).toBe(4);
     expect(getPlayerView(st, 0).partnerHand).toBeNull();
   });
 
@@ -310,8 +310,8 @@ describe('Mão de 10', () => {
     const r = must(applyAction(st, seat, { type: 'truco' }));
     expect(r.events.some((e) => e.type === 'penalty')).toBe(true);
     expect(r.state.hand.result!.reason).toBe('penalty');
-    // assento 1 (dupla B) pediu → dupla A ganha 2 e fecha 12
-    expect(r.state.scores).toEqual([12, 4]);
+    // assento 1 (dupla B) pediu → dupla A ganha o valor da mão (4) e fecha a partida
+    expect(r.state.scores).toEqual([14, 4]);
     expect(r.state.phase).toBe('match_over');
   });
 });
