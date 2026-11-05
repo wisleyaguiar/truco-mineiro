@@ -40,3 +40,4 @@ Ainda fora: online, lobby e reconexão, vozes gravadas (as falas aparecem como b
 - Avatares e cenário são provisórios (geometria simples, sem modelos 3D externos).
 - Sons são sintetizados (WebAudio), não gravados.
 - A IA é heurística. A calibragem fica em `packages/bots/src/personalities.ts`.
+- Desempenho: validado em hardware real (celular e PC), com animações fluidas. Sem GPU (renderização por software), o jogo entra sozinho em qualidade baixa.

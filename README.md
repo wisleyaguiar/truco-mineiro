@@ -1,6 +1,8 @@
 # Zap & Copeta — Truco Mineiro 3D
 
-MVP jogável no navegador de Truco Mineiro (Manilha Velha) em 3D. Modo solo: você + 1 parceiro IA contra 2 IAs.
+**🎮 Jogar agora: https://truco-mineiro-tau.vercel.app/**
+
+Truco Mineiro (Manilha Velha) em 3D, jogável no navegador. Modo solo: você + 1 parceiro IA contra 2 IAs, com sinais secretos entre parceiros. Testado em celular e PC com animações fluidas.
 
 ![Mesa](docs/screenshots/desktop.png)
 
