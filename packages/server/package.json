@@ -1,0 +1,15 @@
+{
+  "name": "@truco/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
+    "@truco/bots": "0.1.0",
+    "@truco/engine": "0.1.0"
+  }
+}

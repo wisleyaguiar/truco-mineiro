@@ -1,6 +1,8 @@
 // Liga motor de regras + bots + palco 3D + HUD.
-// O motor roda localmente no modo solo, mas a interface é a mesma de um servidor autoritativo:
-// o cliente só envia intenções (applyAction) e só enxerga getPlayerView(state, 0).
+// Dois modos:
+// - offline: o motor roda aqui (como na Fase 1/2), com sinais secretos;
+// - online: o servidor é a autoridade; o cliente envia a intenção, recebe os eventos (com pausas)
+//   e só enxerga a própria visão (PlayerView).
 import {
   applyAction,
   betLabel,
@@ -13,10 +15,15 @@ import {
   startNextHand,
   teamOf,
   type Action,
+  type Card,
   type GameEvent,
   type MatchState,
+  type PlayerView,
   type Seat,
 } from '@truco/engine';
+import type { ClientStep, MatchPayload } from '@truco/server/types';
+import gsap from 'gsap';
+import { ApiError, type OnlineApi } from '../online/api.ts';
 import { decideAction, PERSONALITIES, SIGNALS, type PersonalityId, type SignalId } from '@truco/bots';
 import * as sfx from '../audio/sfx.ts';
 import type { Hud } from '../hud/hud.ts';
@@ -52,6 +59,15 @@ export class Controller {
   /** Multiplica os atrasos (testes automatizados usam valor baixo). */
   speed = 1;
   readonly signals: SignalDirector;
+  /** offline: motor local; online: servidor autoritativo. */
+  mode: 'offline' | 'online' = 'offline';
+  /** Último estado recebido do servidor (modo online). */
+  remote: MatchPayload | null = null;
+  private onlineApi: OnlineApi | null = null;
+  /** Assentos que jogaram na vaza atual, na ordem (para destacar a carta vencedora). */
+  private roundSeats: Seat[] = [];
+  /** Chamado quando o online falha de um jeito que exige voltar ao menu (ex.: sessão expirou). */
+  onOnlineFatal: ((message: string) => void) | null = null;
 
   constructor(
     private readonly stage: Stage,
@@ -73,6 +89,10 @@ export class Controller {
   // ---------- sinais ----------
 
   onSignal(sig: SignalId) {
+    if (this.mode === 'online') {
+      this.hud.toast('Sinais secretos por enquanto só no modo offline.', 'info', 1600);
+      return;
+    }
     if (!this.state) return;
     if (!this.signals.humanSignal(sig)) {
       const mode = this.state.hand.mode;
@@ -105,12 +125,39 @@ export class Controller {
     return sleep(ms * this.speed);
   }
 
-  get view() {
+  get view(): PlayerView {
+    if (this.mode === 'online') return this.remote!.view;
     return getPlayerView(this.state, HUMAN);
+  }
+
+  private hasGame(): boolean {
+    return this.mode === 'online' ? this.remote !== null : this.state !== undefined;
+  }
+
+  /** Ações que você pode fazer agora. */
+  private legal(): Action[] {
+    if (this.busy || !this.hasGame()) return [];
+    if (this.mode === 'online') return this.remote!.status === 'active' ? this.remote!.legal : [];
+    return getLegalActions(this.state, HUMAN);
+  }
+
+  /** Nome do jogador de um assento (online: apelidos do servidor; você é sempre "Você"). */
+  nameOf(seat: Seat): string {
+    if (seat === HUMAN) return PLAYERS[HUMAN].name;
+    if (this.mode === 'online' && this.remote) return this.remote.seats.find((s) => s.seat === seat)?.name ?? PLAYERS[seat].name;
+    return PLAYERS[seat].name;
+  }
+
+  /** Começa de novo no mesmo modo da partida anterior. */
+  restart() {
+    if (this.mode === 'online' && this.onlineApi) return this.startOnline(this.onlineApi);
+    return this.start();
   }
 
   async start(seed = Math.floor(Math.random() * 2 ** 31)) {
     const { state, events } = createMatch({}, seed);
+    this.mode = 'offline';
+    this.remote = null;
     this.state = state;
     this.coverOn = false;
     this.botToken++;
@@ -125,7 +172,7 @@ export class Controller {
 
   onCardClick(index: number, rightClick: boolean) {
     if (this.busy || !this.isHumanTurn()) return;
-    const legal = getLegalActions(this.state, HUMAN);
+    const legal = this.legal();
     const wantCover = rightClick || this.coverOn;
     const action = legal.find((a) => a.type === 'play' && a.index === index && !!a.faceDown === wantCover);
     if (!action) {
@@ -134,13 +181,18 @@ export class Controller {
     }
     this.pendingHumanIndex = index;
     this.coverOn = false;
-    void this.act(HUMAN, action);
+    void this.submit(action);
+  }
+
+  /** Envia a sua jogada para o motor local (offline) ou para o servidor (online). */
+  private submit(action: Action) {
+    return this.mode === 'online' ? this.actOnline(action) : this.act(HUMAN, action);
   }
 
   onTruco() {
     if (this.busy || !this.isHumanTurn()) return;
-    if (!getLegalActions(this.state, HUMAN).some((a) => a.type === 'truco')) return;
-    void this.act(HUMAN, { type: 'truco' });
+    if (!this.legal().some((a) => a.type === 'truco')) return;
+    void this.submit({ type: 'truco' });
   }
 
   onToggleCover() {
@@ -149,17 +201,20 @@ export class Controller {
   }
 
   onRespond(r: 'accept' | 'run' | 'raise') {
-    if (this.busy || this.state.phase !== 'bet_response') return;
-    void this.act(HUMAN, { type: r });
+    if (this.busy || !this.hasGame() || this.view.phase !== 'bet_response') return;
+    void this.submit({ type: r });
   }
 
   onMao10(play: boolean) {
-    if (this.busy || this.state.phase !== 'mao_de_10_decision') return;
-    void this.act(HUMAN, { type: 'mao10', play });
+    if (this.busy || !this.hasGame() || this.view.phase !== 'mao_de_10_decision') return;
+    void this.submit({ type: 'mao10', play });
   }
 
   private isHumanTurn() {
-    return this.state.phase === 'playing' && this.state.hand.turn === HUMAN;
+    if (!this.hasGame()) return false;
+    if (this.mode === 'online' && this.remote!.status !== 'active') return false;
+    const v = this.view;
+    return v.phase === 'playing' && v.turn === HUMAN;
   }
 
   // ---------- laço principal ----------
@@ -185,15 +240,7 @@ export class Controller {
     this.stage.setInteractive(false);
     this.hud.hideModal();
     try {
-      for (const e of events) {
-        this.currentAnim = { type: e.type, seat: 'seat' in e ? e.seat : undefined, since: performance.now() };
-        // Rede de segurança: uma animação nunca pode travar o jogo.
-        let timer = 0;
-        const timeout = new Promise<'timeout'>((r) => (timer = window.setTimeout(() => r('timeout'), 10000)));
-        const res = await Promise.race([this.animate(e).then(() => 'ok' as const), timeout]);
-        clearTimeout(timer);
-        if (res === 'timeout') console.warn('Animação travou e foi pulada:', e.type, JSON.stringify(e));
-      }
+      for (const e of events) await this.animateSafe(e);
     } catch (err) {
       console.error('Erro ao animar evento', this.currentAnim, err);
     } finally {
@@ -204,8 +251,46 @@ export class Controller {
     this.schedule();
   }
 
+  /** Anima um evento com rede de segurança: uma animação nunca pode travar o jogo. */
+  private async animateSafe(e: GameEvent, myHand?: (Card | null)[]) {
+    this.currentAnim = { type: e.type, seat: 'seat' in e ? e.seat : undefined, since: performance.now() };
+    let timer = 0;
+    const timeout = new Promise<'timeout'>((r) => (timer = window.setTimeout(() => r('timeout'), 10000)));
+    const res = await Promise.race([this.animate(e, myHand).then(() => 'ok' as const), timeout]);
+    clearTimeout(timer);
+    if (res === 'timeout') console.warn('Animação travou e foi pulada:', e.type, JSON.stringify(e));
+  }
+
+  /** Mostra a decisão que é sua (truco pendente / Mão de 10), a partir da sua visão. */
+  private showHumanDecision(view: PlayerView) {
+    const ladder = view.config.betLadder;
+    if (view.phase === 'bet_response' && view.pendingBet) {
+      const bet = view.pendingBet;
+      const next = nextBetValue(bet.value, ladder);
+      this.hud.showBet({
+        from: this.nameOf(bet.bySeat),
+        label: betLabel(betName(bet.value, ladder)),
+        value: bet.value,
+        previous: ladder[ladder.indexOf(bet.value) - 1] ?? view.value,
+        raiseLabel: next !== null ? betLabel(betName(next, ladder)) : null,
+      });
+    } else if (view.phase === 'mao_de_10_decision') {
+      this.hud.showMao10(
+        view.myHand.filter((c): c is Card => c !== null),
+        view.partnerHand ?? [],
+        this.nameOf(2),
+        view.config.maoDe10Value,
+        ladder[0]!,
+      );
+    }
+  }
+
   /** Decide quem age agora: humano (libera UI) ou bot (agenda jogada). */
   private schedule() {
+    if (this.mode === 'online') {
+      this.scheduleOnline();
+      return;
+    }
     const st = this.state;
     if (st.phase === 'match_over') return;
     if (st.phase === 'hand_over') {
@@ -216,27 +301,11 @@ export class Controller {
     const humanTeam = teamOf(HUMAN);
     const view = this.view;
 
-    if (st.phase === 'bet_response' && teamOf(seats[0]!) === humanTeam) {
-      const bet = view.pendingBet!;
-      const ladder = st.config.betLadder;
-      const next = nextBetValue(bet.value, ladder);
-      this.hud.showBet({
-        from: PLAYERS[bet.bySeat].name,
-        label: betLabel(betName(bet.value, ladder)),
-        value: bet.value,
-        previous: ladder[ladder.indexOf(bet.value) - 1] ?? view.value,
-        raiseLabel: next !== null ? betLabel(betName(next, ladder)) : null,
-      });
-      return;
-    }
-    if (st.phase === 'mao_de_10_decision' && st.hand.maoDe10Team === humanTeam) {
-      this.hud.showMao10(
-        view.myHand.filter((c) => c !== null),
-        view.partnerHand ?? [],
-        PLAYERS[2].name,
-        st.config.maoDe10Value,
-        st.config.betLadder[0]!,
-      );
+    if (
+      (st.phase === 'bet_response' && teamOf(seats[0]!) === humanTeam) ||
+      (st.phase === 'mao_de_10_decision' && st.hand.maoDe10Team === humanTeam)
+    ) {
+      this.showHumanDecision(view);
       return;
     }
     if (st.phase === 'playing' && st.hand.turn === HUMAN) {
@@ -273,6 +342,127 @@ export class Controller {
     });
   }
 
+  // ---------- modo online ----------
+
+  /** Começa uma partida solo no servidor (ou retoma `resumeId`, reproduzindo a partida rápido). */
+  async startOnline(api: OnlineApi, resumeId?: string) {
+    this.mode = 'online';
+    this.onlineApi = api;
+    this.coverOn = false;
+    this.botToken++;
+    this.botPending = false;
+    this.signals.stop();
+    this.busy = true;
+    this.hud.hideModal();
+    this.stage.setInteractive(false);
+    let payload: MatchPayload;
+    try {
+      payload = resumeId ? await api.match(resumeId, 0) : await api.createSolo();
+    } catch (err) {
+      this.busy = false;
+      this.handleOnlineError(err, true);
+      return;
+    }
+    this.remote = null;
+    await this.stage.clearTable(3);
+    if (resumeId) {
+      // Reproduz tudo bem rápido até o estado atual.
+      const speed = this.speed;
+      this.speed = 0;
+      gsap.globalTimeline.timeScale(25);
+      try {
+        await this.runTimed(payload.steps, payload, true);
+      } finally {
+        this.speed = speed;
+        gsap.globalTimeline.timeScale(1);
+      }
+      this.refresh();
+      this.schedule();
+    } else {
+      await this.runTimed(payload.steps, payload);
+    }
+  }
+
+  private scheduleOnline() {
+    const r = this.remote;
+    if (!r || r.status !== 'active' || r.waitingFor !== HUMAN) return;
+    const v = r.view;
+    if (v.phase === 'bet_response' || v.phase === 'mao_de_10_decision') {
+      this.showHumanDecision(v);
+      return;
+    }
+    if (v.phase === 'playing' && v.turn === HUMAN) {
+      this.stage.setTurn(HUMAN);
+      this.stage.setInteractive(true);
+    }
+  }
+
+  private async actOnline(action: Action) {
+    const r = this.remote;
+    const api = this.onlineApi;
+    if (!r || !api) return;
+    this.busy = true;
+    this.stage.setInteractive(false);
+    this.hud.hideModal();
+    let payload: MatchPayload;
+    try {
+      payload = await api.act(r.matchId, action, r.version);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === 'conflict') {
+        // A mesa mudou (ex.: outra aba): busca o que falta e segue.
+        try {
+          payload = await api.match(r.matchId, r.version);
+        } catch (err2) {
+          this.busy = false;
+          this.handleOnlineError(err2);
+          return;
+        }
+      } else {
+        this.busy = false;
+        this.pendingHumanIndex = null;
+        this.handleOnlineError(err);
+        this.refresh();
+        this.schedule();
+        return;
+      }
+    }
+    await this.runTimed(payload.steps, payload);
+  }
+
+  /** Anima os passos recebidos do servidor (respeitando as pausas dos bots) e atualiza a visão. */
+  private async runTimed(steps: ClientStep[], final: MatchPayload, quiet = false) {
+    this.remote = final;
+    this.busy = true;
+    this.stage.setInteractive(false);
+    this.hud.hideModal();
+    try {
+      for (const s of steps) {
+        for (const te of s.events) {
+          if (te.delayMs) await this.delay(te.delayMs);
+          await this.animateSafe(te.event, te.myHand);
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao animar eventos do servidor', err);
+    } finally {
+      this.currentAnim = null;
+      this.busy = false;
+    }
+    if (quiet) return;
+    this.refresh();
+    this.schedule();
+  }
+
+  private handleOnlineError(err: unknown, fatal = false) {
+    const e = err instanceof ApiError ? err : new ApiError(0, 'unknown', 'Erro inesperado.');
+    console.warn('Erro online', e.status, e.code, e.message);
+    if (e.status === 401 || fatal) {
+      this.onOnlineFatal?.(e.message);
+      return;
+    }
+    this.hud.toast(e.message, 'bad', 2400);
+  }
+
   /**
    * Proteção contra travamento: se ninguém agir por alguns segundos num momento de bot,
    * reagenda a jogada. Não deve disparar em condições normais (loga um aviso se disparar).
@@ -282,6 +472,7 @@ export class Controller {
     let last = this.state;
     let since = performance.now();
     this.watchdog = window.setInterval(() => {
+      if (this.mode !== 'offline') return;
       if (!this.state || this.state !== last) {
         last = this.state;
         since = performance.now();
@@ -323,14 +514,20 @@ export class Controller {
 
   // ---------- animação de cada evento ----------
 
-  private async animate(e: GameEvent) {
+  private async animate(e: GameEvent, myHand?: (Card | null)[]) {
     const usTeam = teamOf(HUMAN);
     switch (e.type) {
       case 'hand_started': {
         this.stage.setTurn(null);
-        this.refresh();
-        await this.stage.deal(e.dealer, this.view.myHand, () => sfx.cardSlide());
-        this.signals.onHandStarted();
+        this.roundSeats = [];
+        if (this.mode === 'online') {
+          await this.stage.clearTable(e.dealer);
+          this.hud.resetHand(e.value);
+        } else {
+          this.refresh();
+        }
+        await this.stage.deal(e.dealer, myHand ?? this.view.myHand, () => sfx.cardSlide());
+        if (this.mode === 'offline') this.signals.onHandStarted();
         if (e.mode === 'mao_de_10') {
           this.hud.toast(e.maoDe10Team === usTeam ? 'Mão de 10! Nós decidimos.' : 'Mão de 10 deles!', 'info', 1800);
           if (e.maoDe10Team === usTeam) this.hud.say(2, line('mao10'));
@@ -353,7 +550,8 @@ export class Controller {
           this.stage.setTurn(e.seat);
           await this.stage.playBot(e.seat, e.card, e.faceDown);
         }
-        this.signals.onCardPlayed(e.seat, e.card, this.state.hand.hands[e.seat]!.length);
+        this.roundSeats.push(e.seat);
+        if (this.mode === 'offline') this.signals.onCardPlayed(e.seat, e.card, this.state.hand.hands[e.seat]!.length);
         sfx.cardSnap(isZap);
         if (isZap) {
           this.stage.shake(1.4);
@@ -368,12 +566,12 @@ export class Controller {
 
       case 'round_ended': {
         this.stage.setTurn(null);
-        const plays = this.state.hand.rounds[e.round]?.plays ?? [];
-        const winnerIndex = e.winningSeat !== null ? plays.findIndex((p) => p.seat === e.winningSeat) : null;
+        const winnerIndex = e.winningSeat !== null ? this.roundSeats.indexOf(e.winningSeat) : null;
         this.hud.setRoundDot(e.round, e.winner, usTeam);
         if (e.winner === 'tie') this.hud.say(e.winningSeat ?? 0, line('canga'));
-        await this.stage.collectRound(e.winningSeat, e.winner === 'tie', winnerIndex);
-        if (this.state.phase === 'playing' && this.state.hand.currentRound > e.round) this.signals.onRoundStarted();
+        await this.stage.collectRound(e.winningSeat, e.winner === 'tie', winnerIndex !== null && winnerIndex >= 0 ? winnerIndex : null);
+        this.roundSeats = [];
+        if (this.mode === 'offline' && this.state.phase === 'playing' && this.state.hand.currentRound > e.round) this.signals.onRoundStarted();
         break;
       }
 
@@ -383,12 +581,14 @@ export class Controller {
         this.stage.shake(intensity);
         this.stage.nod(e.seat, true);
         this.hud.say(e.seat, e.seat === HUMAN ? `${betLabel(e.name)}` : betLine(e.name), true, 2600);
+        if (this.mode === 'online') this.hud.setValueText(`${e.value} ?`);
         this.refresh();
         await this.delay(900);
         break;
       }
 
       case 'bet_accepted':
+        if (this.mode === 'online') this.hud.setValueText(String(e.value));
         this.hud.say(e.seat, line('accept'));
         this.stage.nod(e.seat);
         this.refresh();
@@ -410,7 +610,7 @@ export class Controller {
         break;
 
       case 'penalty':
-        this.hud.toast(`${PLAYERS[e.seat].name} pediu truco na Mão de 10 e perdeu a mão!`, 'bad', 2400);
+        this.hud.toast(`${this.nameOf(e.seat)} pediu truco na Mão de 10 e perdeu a mão!`, 'bad', 2400);
         await this.delay(1200);
         break;
 
@@ -439,9 +639,11 @@ export class Controller {
   // ---------- HUD ----------
 
   refresh() {
-    if (!this.state) return;
+    if (!this.hasGame()) return;
+    // Online: durante a animação, o HUD é atualizado pelos próprios eventos (a visão já é a final).
+    if (this.mode === 'online' && this.busy) return;
     const view = this.view;
-    const legal = this.busy ? [] : getLegalActions(this.state, HUMAN);
+    const legal = this.legal();
     const canTruco = legal.some((a) => a.type === 'truco');
     const canCover = legal.some((a) => a.type === 'play' && a.faceDown);
     const next = nextBetValue(view.value, view.config.betLadder);
@@ -449,13 +651,13 @@ export class Controller {
     const myTurn = !this.busy && this.isHumanTurn();
     let status = '';
     if (view.phase === 'playing') {
-      status = view.turn === HUMAN ? (view.mode === 'mao_de_ferro' ? 'Sua vez: escolha uma carta no escuro' : 'Sua vez') : `Vez de ${PLAYERS[view.turn].name}`;
+      status = view.turn === HUMAN ? (view.mode === 'mao_de_ferro' ? 'Sua vez: escolha uma carta no escuro' : 'Sua vez') : `Vez de ${this.nameOf(view.turn)}`;
     } else if (view.phase === 'bet_response') {
-      status = teamOf(seatsToAct(this.state)[0]!) === teamOf(HUMAN) ? 'Responda o desafio' : 'Esperando resposta...';
+      status = view.pendingBet && view.pendingBet.byTeam !== view.team ? 'Responda o desafio' : 'Esperando resposta...';
     } else if (view.phase === 'mao_de_10_decision') {
       status = view.maoDe10Team === view.team ? 'Mão de 10: decida' : 'Eles estão decidindo a Mão de 10...';
     }
-    const canSignal = view.mode === 'normal' && (view.phase === 'playing' || view.phase === 'bet_response');
+    const canSignal = this.mode === 'offline' && view.mode === 'normal' && (view.phase === 'playing' || view.phase === 'bet_response');
     this.hud.render(view, { myTurn, canTruco, trucoLabel, canCover, coverOn: this.coverOn, status, canSignal });
   }
 }

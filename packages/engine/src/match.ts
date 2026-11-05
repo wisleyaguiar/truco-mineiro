@@ -4,6 +4,7 @@ import { decideHand, resolveRound } from './hand.ts';
 import { shuffle } from './rng.ts';
 import type {
   Action,
+  Card,
   ApplyResult,
   GameEvent,
   HandEndReason,
@@ -28,7 +29,16 @@ function clone<T>(v: T): T {
 }
 
 /** Cria a partida e já distribui a primeira mão. */
-export function createMatch(config: Partial<MatchConfig> = {}, seed = 1): { state: MatchState; events: GameEvent[] } {
+/**
+ * Cria a partida e já distribui a primeira mão.
+ * `deck` (opcional): baralho já embaralhado (40 cartas). No online, o servidor embaralha com
+ * aleatoriedade criptográfica e passa aqui — a semente de 32 bits é previsível demais.
+ */
+export function createMatch(
+  config: Partial<MatchConfig> = {},
+  seed = 1,
+  deck?: readonly Card[],
+): { state: MatchState; events: GameEvent[] } {
   const cfg: MatchConfig = { ...DEFAULT_CONFIG, ...config };
   const state: MatchState = {
     config: cfg,
@@ -41,16 +51,21 @@ export function createMatch(config: Partial<MatchConfig> = {}, seed = 1): { stat
     capote: false,
   };
   const events: GameEvent[] = [];
-  dealHand(state, cfg.firstDealer, 1, events);
+  dealHand(state, cfg.firstDealer, 1, events, deck);
   return { state, events };
 }
 
 /** Distribui a próxima mão (só quando phase === 'hand_over'). */
-export function startNextHand(prev: MatchState): ApplyResult {
+/** Distribui a próxima mão. `deck` (opcional): baralho já embaralhado, como em `createMatch`. */
+export function startNextHand(prev: MatchState, deck?: readonly Card[]): ApplyResult {
   if (prev.phase !== 'hand_over') return { ok: false, error: 'A mão atual ainda não terminou.' };
   const state = clone(prev);
   const events: GameEvent[] = [];
-  dealHand(state, nextSeat(state.hand.dealer), state.hand.number + 1, events);
+  try {
+    dealHand(state, nextSeat(state.hand.dealer), state.hand.number + 1, events, deck);
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
   return { ok: true, state, events };
 }
 
@@ -81,9 +96,26 @@ function handModeFor(state: MatchState): { mode: HandMode; maoDe10Team: Team | n
   return { mode: 'normal', maoDe10Team: null };
 }
 
-function dealHand(state: MatchState, dealer: Seat, number: number, events: GameEvent[]): void {
-  const shuffled = shuffle(createDeck(), state.rngState);
-  state.rngState = shuffled.state;
+/** Confere se `deck` é exatamente o baralho de 40 cartas (em qualquer ordem). */
+function validateDeck(deck: readonly Card[]): Card[] {
+  const ids = new Set(createDeck().map((c) => c.id));
+  if (deck.length !== ids.size) throw new Error('Baralho inválido: precisa de 40 cartas.');
+  for (const c of deck) {
+    if (!ids.delete(c.id)) throw new Error(`Baralho inválido: carta repetida ou desconhecida (${c.id}).`);
+  }
+  return deck.map((c) => ({ ...c }));
+}
+
+function dealHand(state: MatchState, dealer: Seat, number: number, events: GameEvent[], deck?: readonly Card[]): void {
+  let cards: Card[];
+  if (deck) {
+    cards = validateDeck(deck);
+  } else {
+    const shuffled = shuffle(createDeck(), state.rngState);
+    state.rngState = shuffled.state;
+    cards = shuffled.items;
+  }
+  const shuffled = { items: cards };
   const hand = emptyHand(dealer, number);
   hand.value = state.config.betLadder[0]!;
   // Distribui 3 cartas para cada um, começando pelo jogador após o dealer.

@@ -12,14 +12,20 @@
   },
   "scripts": {
     "dev": "npm -w @truco/client run dev",
+    "dev:api": "node scripts/dev-api.mjs",
     "build": "npm run typecheck && npm -w @truco/client run build",
+    "build:vercel": "npm run build && node scripts/build-vercel.mjs",
     "preview": "npm -w @truco/client run preview",
-    "typecheck": "tsc -p packages/engine && tsc -p packages/bots && tsc -p apps/client",
+    "typecheck": "tsc -p packages/engine && tsc -p packages/bots && tsc -p packages/server && tsc -p apps/client",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.27.7",
+    "pg": "^8.23.1",
     "typescript": "~5.9.3",
     "vitest": "^5.0.1"
   }
