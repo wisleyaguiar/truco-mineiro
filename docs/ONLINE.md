@@ -29,7 +29,7 @@ O e-mail padrão do Supabase **só envia para membros da equipe do projeto** e t
 - **Site URL:** `https://truco-mineiro-tau.vercel.app`
 - **Redirect URLs** (adicione as três):
   - `https://truco-mineiro-tau.vercel.app/**`
-  - `https://*-wisleyaguiar.vercel.app/**` (previews dos PRs)
+  - `https://truco-mineiro-*-aguiar-web1.vercel.app/**` (previews dos PRs, ex.: `truco-mineiro-git-feat-fase3a-infra-aguiar-web1.vercel.app`)
   - `http://localhost:5173/**` (desenvolvimento)
 
 ## 4. Variáveis na Vercel
@@ -45,6 +45,8 @@ Em **Project → Settings → Environment Variables** (marque Production e Previ
 Depois: **Deployments → ⋯ → Redeploy** (as variáveis `VITE_*` entram no build).
 
 Recomendado: **Settings → Functions → Function Region → São Paulo (gru1)**, perto do banco.
+
+Obs.: os previews dos PRs ficam protegidos pela Vercel (Vercel Authentication): só abre quem está logado na sua conta Vercel. A produção é pública.
 
 > Nunca coloque a chave secreta em variável que comece com `VITE_` (essas vão para o navegador).
 
