@@ -24,6 +24,16 @@ node scripts/e2e.cjs http://localhost:5173/   # joga uma partida inteira no Chro
 
 `?q=low` na URL força qualidade baixa (sem sombras, resolução 1x). É ativado automaticamente quando o navegador não tem GPU.
 
+## Deploy na Vercel
+
+O jogo é estático (Vite), então roda no plano gratuito. As configurações de build já estão em `vercel.json`.
+
+1. Na Vercel: **Add New… → Project** e importe `wisleyaguiar/truco-mineiro` do GitHub.
+2. **Root Directory**: deixe a raiz (`./`), não aponte para `apps/client`.
+3. Não precisa mexer em Framework, Build, Output nem variáveis de ambiente. Clique em **Deploy**.
+
+Cada push no `main` publica automaticamente, e cada PR ganha uma URL de preview.
+
 ## Estrutura
 
 ```

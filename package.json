@@ -7,6 +7,9 @@
     "packages/*",
     "apps/*"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "npm -w @truco/client run dev",
     "build": "npm run typecheck && npm -w @truco/client run build",
