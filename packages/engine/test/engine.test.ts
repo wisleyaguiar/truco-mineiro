@@ -9,6 +9,7 @@ import {
   getPlayerView,
   parseCard,
   resolveRound,
+  secureShuffle,
   startNextHand,
   type Action,
   type MatchState,
@@ -397,5 +398,35 @@ describe('embaralhamento determinístico', () => {
     const c = createMatch({}, 100).state.hand.hands;
     expect(a).toEqual(b);
     expect(a).not.toEqual(c);
+  });
+});
+
+describe('baralho injetado (servidor online)', () => {
+  it('usa exatamente a ordem do baralho recebido', () => {
+    const deck = createDeck().reverse();
+    const { state } = createMatch({}, 1, deck);
+    // dealer 3 → assento 0 recebe a 1ª, 5ª e 9ª cartas
+    expect(state.hand.hands[0]!.map((c) => c.id)).toEqual([deck[0]!.id, deck[4]!.id, deck[8]!.id]);
+  });
+
+  it('rejeita baralho incompleto ou com repetição', () => {
+    const deck = createDeck();
+    expect(() => createMatch({}, 1, deck.slice(1))).toThrow();
+    expect(() => createMatch({}, 1, [...deck.slice(0, 39), deck[0]!])).toThrow(); // 40 cartas, mas com uma repetida
+  });
+
+  it('startNextHand aceita baralho e devolve erro se inválido', () => {
+    let st = setup(BASIC);
+    st = act(st, 0, { type: 'truco' });
+    st = act(st, 1, { type: 'run' });
+    expect(startNextHand(st, createDeck().slice(2)).ok).toBe(false);
+    expect(startNextHand(st, createDeck()).ok).toBe(true);
+  });
+
+  it('secureShuffle mantém as 40 cartas e varia a ordem', () => {
+    const a = secureShuffle(createDeck());
+    const b = secureShuffle(createDeck());
+    expect(new Set(a.map((c) => c.id)).size).toBe(40);
+    expect(a.map((c) => c.id)).not.toEqual(b.map((c) => c.id));
   });
 });

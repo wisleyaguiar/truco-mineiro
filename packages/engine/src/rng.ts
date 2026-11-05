@@ -31,3 +31,26 @@ export function createRng(seed: number): () => number {
     return r.value;
   };
 }
+
+/**
+ * Embaralhamento com aleatoriedade criptográfica (crypto.getRandomValues), para o servidor online.
+ * Usa amostragem por rejeição para não ter viés.
+ */
+export function secureShuffle<T>(items: readonly T[]): T[] {
+  const c = (globalThis as { crypto?: { getRandomValues<A extends Uint32Array>(a: A): A } }).crypto;
+  if (!c?.getRandomValues) throw new Error('crypto.getRandomValues indisponível');
+  const arr = items.slice();
+  const buf = new Uint32Array(1);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const n = i + 1;
+    const limit = Math.floor(0x100000000 / n) * n;
+    let r: number;
+    do {
+      c.getRandomValues(buf);
+      r = buf[0]!;
+    } while (r >= limit);
+    const j = r % n;
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+  }
+  return arr;
+}
