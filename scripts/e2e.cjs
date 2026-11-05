@@ -27,12 +27,64 @@ async function waitHumanTurnOrModal(page, timeout = 30000) {
   );
 }
 
+
+/** Testa a roda de sinais, o recebimento pelo parceiro e a interceptação. */
+async function testSignals(page, label, shots) {
+  // Conta sinais dos bots (via pop de emoji no HUD)
+  await page.evaluate(() => {
+    if (window.__popHooked) return;
+    window.__popHooked = true;
+    window.__botSignalCount = 0;
+    const obs = new MutationObserver((muts) => muts.forEach((m) => m.target.classList?.contains('show') && window.__botSignalCount++));
+    document.querySelectorAll('.pop').forEach((p) => obs.observe(p, { attributes: true, attributeFilter: ['class'] }));
+  });
+  // 1) Ninguém olhando: abre a roda, manda Zap. Parceiro (2) deve saber; adversários não.
+  await page.evaluate(() => {
+    const s = window.__truco.controller.signals;
+    s.pinGaze(1, null);
+    s.pinGaze(3, null);
+  });
+  await page.click('.bar button:has-text("Sinais")');
+  await sleep(400);
+  if (shots) await page.screenshot({ path: path.join(OUT, `${label}-8-roda-sinais.png`) });
+  await page.click('.wheel .sig[data-sig="zap"]');
+  await sleep(300);
+  const k1 = await page.evaluate(() => {
+    const s = window.__truco.controller.signals;
+    return { parceiro: s.knowledgeFor(2)[0] ?? null, adv1: s.knowledgeFor(1)[0] ?? null, adv3: s.knowledgeFor(3)[0] ?? null };
+  });
+  // 2) Zé (1) olhando pra você: manda Copeta (tecla 2) depois do intervalo. Zé deve interceptar.
+  await page.evaluate(() => window.__truco.controller.signals.pinGaze(1, 0));
+  await sleep(500);
+  const eyeOn = await page.$$eval('.tag.watching', (els) => els.length);
+  await sleep(1700);
+  await page.keyboard.press('2');
+  await sleep(300);
+  const toast = await page.$eval('.toast', (e) => e.textContent);
+  if (shots) await page.screenshot({ path: path.join(OUT, `${label}-9-sinal-interceptado.png`) });
+  const k2 = await page.evaluate(() => {
+    const s = window.__truco.controller.signals;
+    return { parceiro: s.knowledgeFor(2)[0] ?? null, adv1: s.knowledgeFor(1)[0] ?? null, adv3: s.knowledgeFor(3)[0] ?? null };
+  });
+  await page.evaluate(() => {
+    const s = window.__truco.controller.signals;
+    s.pinGaze(1, undefined);
+    s.pinGaze(3, undefined);
+  });
+  const ok =
+    JSON.stringify(k1.parceiro) === '["zap"]' && k1.adv1 === null && k1.adv3 === null &&
+    eyeOn >= 1 && /pegou/.test(toast) &&
+    JSON.stringify(k2.adv1) === '["copeta"]' && k2.adv3 === null && (k2.parceiro || []).includes('copeta');
+  if (!ok) console.log('FALHA SINAIS', JSON.stringify({ k1, k2, eyeOn, toast }));
+  return { ok, k1, k2, eyeOn, toast };
+}
+
 async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   const allLogs = [];
   page.on('console', (m) => allLogs.push(m.type() + ': ' + m.text()));
-  page.on('console', (m) => (m.type() === 'error' || m.text().startsWith('Watchdog') || m.text().startsWith('Ação inválida')) && errors.push(m.text()));
+  page.on('console', (m) => (m.type() === 'error' || m.text().startsWith('Watchdog') || m.text().startsWith('Ação inválida') || m.text().startsWith('Animação travou')) && errors.push(m.text()));
 
   await page.goto(URL);
   await page.waitForSelector('.modal.start');
@@ -47,6 +99,8 @@ async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
   let shotBet = false;
   let shotMao10 = false;
   let coverDone = false;
+  let signalsDone = false;
+  let signalReport = null;
   const seen = new Set();
 
   while (step++ < maxSteps) {
@@ -57,7 +111,7 @@ async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
       const dump = await page.evaluate(() => {
         const c = window.__truco.controller;
         const s = c.state;
-        return { botPending: c.botPending, botToken: c.botToken, speed: c.speed, hidden: document.hidden, vis: document.visibilityState, busy: c.busy, phase: s.phase, turn: s.hand.turn, pending: s.hand.pendingBet, round: s.hand.currentRound, mode: s.hand.mode, hands: s.hand.hands.map((h) => h.length), modal: document.querySelector('.modal')?.className };
+        return { anim: c.currentAnim && { ...c.currentAnim, ageMs: Math.round(performance.now() - c.currentAnim.since) }, botPending: c.botPending, botToken: c.botToken, speed: c.speed, hidden: document.hidden, vis: document.visibilityState, busy: c.busy, phase: s.phase, turn: s.hand.turn, pending: s.hand.pendingBet, round: s.hand.currentRound, mode: s.hand.mode, hands: s.hand.hands.map((h) => h.length), modal: document.querySelector('.modal')?.className };
       });
       await page.screenshot({ path: path.join(OUT, `${label}-TRAVOU.png`) });
       console.log('TRAVOU', JSON.stringify(dump), errors, allLogs.filter((l) => !l.includes('GL Driver')).slice(-15));
@@ -93,6 +147,13 @@ async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
       await sleep(400);
       await page.screenshot({ path: path.join(OUT, `${label}-2-sua-vez.png`) });
       shotTurn = true;
+    }
+    if (!signalsDone) {
+      signalsDone = true;
+      const sig = await testSignals(page, label, shots);
+      seen.add('sinais');
+      signalReport = sig;
+      continue;
     }
     const st = await page.evaluate(() => {
       const s = window.__truco.controller.state;
@@ -142,7 +203,8 @@ async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
     const s = window.__truco.controller.state;
     return { scores: s.scores, winner: s.winner, capote: s.capote, hands: s.hand.number };
   });
-  return { result, errors, seen: [...seen], steps: step };
+  const botSignals = await page.evaluate(() => window.__botSignalCount || 0);
+  return { result, errors, seen: [...seen], steps: step, signals: signalReport, botSignalsSeen: botSignals };
 }
 
 (async () => {
@@ -151,6 +213,9 @@ async function playMatch(page, label, { shots = true, maxSteps = 400 } = {}) {
     const desktop = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
     const d = await playMatch(desktop, 'desktop');
     console.log('DESKTOP', JSON.stringify(d));
+    // Fecha a página do desktop antes do celular: sem GPU, duas páginas WebGL ao mesmo tempo
+    // disputam o mesmo renderizador por software e travam a thread principal da segunda.
+    await desktop.close();
 
     const ctx = await browser.newContext({ ...devices['iPhone 13'] });
     const mobile = await ctx.newPage();

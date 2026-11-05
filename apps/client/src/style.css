@@ -319,9 +319,145 @@ body {
   font-size: 18px;
 }
 
+.btn.mute {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 12px;
+  padding: 6px 8px;
+  font-size: 16px;
+}
+
 .btn.big {
   font-size: 22px;
   padding: 12px 28px;
+}
+
+/* ---------- Sinais ---------- */
+.tag .eye {
+  opacity: 0.18;
+  filter: grayscale(1);
+  transition:
+    opacity 0.15s,
+    filter 0.15s;
+}
+
+.tag.watching {
+  border-color: #ff8a5c;
+}
+
+.tag.watching .eye {
+  opacity: 1;
+  filter: none;
+}
+
+.pop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 30px;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.pop.show {
+  animation: pop 1.2s ease-out;
+}
+
+@keyframes pop {
+  0% {
+    opacity: 0;
+    scale: 0.4;
+  }
+  20% {
+    opacity: 1;
+    scale: 1.15;
+  }
+  70% {
+    opacity: 1;
+    scale: 1;
+  }
+  100% {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+
+.wheel {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(10, 6, 3, 0.25);
+}
+
+.wheel.hidden {
+  display: none;
+}
+
+.wheel .ring {
+  position: absolute;
+  left: 50%;
+  bottom: 190px;
+  width: 0;
+  height: 0;
+}
+
+.wheel .sig {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 78px;
+  height: 64px;
+  transform: translate(calc(var(--x) - 50%), calc(var(--y) - 50%));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 14px;
+  border: 2px solid rgba(224, 184, 90, 0.7);
+  background: rgba(36, 22, 12, 0.95);
+  color: var(--cream);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  font-family: var(--sans);
+}
+
+.wheel .sig:hover {
+  border-color: var(--gold);
+  background: rgba(74, 46, 24, 0.98);
+}
+
+.wheel .sig .e {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.wheel .sig .n {
+  font-size: 11px;
+}
+
+.wheel .sig kbd {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  font-size: 10px;
+  opacity: 0.55;
+  font-family: var(--sans);
+}
+
+.wheel .hint {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 104px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  background: rgba(20, 13, 8, 0.88);
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 /* ---------- Toast ---------- */
@@ -546,10 +682,25 @@ body {
   }
 
   .tag {
-    font-size: 11px;
+    font-size: 10px;
+    padding: 3px 7px;
+    gap: 4px;
+  }
+
+  .tag .ia {
+    display: none;
+  }
+
+  .btn.mute {
+    padding: 4px 6px;
+    font-size: 14px;
   }
 
   .tag small {
     display: none;
+  }
+
+  .wheel .ring {
+    bottom: 230px;
   }
 }

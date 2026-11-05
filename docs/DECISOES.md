@@ -17,9 +17,23 @@ O PRD (`docs/PRD.md`) tinha pontos ambíguos ou contraditórios. Abaixo está o 
 | Quem pode pedir truco | Só na sua vez de jogar. | Prática comum; o PRD não dizia. |
 | Primeiro a jogar | O jogador seguinte ao dealer; o dealer gira a cada mão. Ordem anti-horária. | Prática comum. |
 
+## Sinais secretos (Fase 2)
+
+| Tema | Decisão |
+|---|---|
+| Sinais | 😉 Zap (piscar um olho) · 😗 Copeta (bico) · 😛 Espadilha (língua) · 🤷 Pica-fumo (ombro + cabeça) · ✋ Três (3 batidinhas nas cartas) · 😑 Cego (fecha os dois olhos = "não tenho nada"). |
+| Significado | Um sinal é uma **afirmação** ("tenho o Zap"). Pode ser blefe: quem recebe acredita. |
+| Quem recebe | O parceiro **sempre** recebe. Adversário que estava **olhando para quem sinalizou** no instante do sinal intercepta e passa a "saber" a carta. |
+| Olhar dos bots | Cada bot alterna o olhar a cada 1,5–4 s: para um adversário, para o parceiro ou para a mesa. O Desconfiado vigia mais os adversários; o Zé do Blefe vigia menos. Na plaquinha do adversário, o 👁 acende quando ele está te olhando. |
+| Quando os bots sinalizam | Depois da distribuição e no começo de cada vaza, cada afirmação uma vez por mão. Esperam ninguém estar olhando: o Desconfiado nunca sinaliza vigiado, o Equilibrado raramente, o Zé do Blefe é descuidado (e às vezes manda sinal falso quando está cego). |
+| O que os bots fazem com isso | Usam a carta conhecida do parceiro no cálculo de chance (aceitam e pedem truco com mais confiança) e não gastam carta boa quando o parceiro cobre. Carta de adversário interceptada também entra no cálculo. |
+| Efeito medido | Em 1.000 partidas simuladas, a dupla que troca sinais vence **~54%** contra ~50% do controle sem sinais. O ganho é real, mas moderado: no truco a sorte pesa muito. |
+| Seus sinais | Botão **Sinais** (roda) ou teclas 1–6, com intervalo de 2 s entre sinais. Só em mão normal (não na Mão de 10 nem na Mão de Ferro). Você vê um balão "😉 você piscou", porque não vê o próprio rosto. |
+| Sinais dos adversários | Os gestos aparecem nos avatares, com um emoji rápido perto do rosto. Cabe a você perceber e interpretar. |
+
 ## Escopo
 
-Fora do MVP: online, lobby e reconexão, sinais secretos e expressões faciais, vozes gravadas (as falas aparecem como balões de texto), ranking, duplas e campeonatos, e o timer de 15 s por jogada.
+Ainda fora: online, lobby e reconexão, vozes gravadas (as falas aparecem como balões de texto), ranking, duplas e campeonatos, e o timer de 15 s por jogada.
 
 ## Limitações conhecidas
 

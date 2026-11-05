@@ -17,10 +17,11 @@ import {
   type MatchState,
   type Seat,
 } from '@truco/engine';
-import { decideAction, PERSONALITIES, type PersonalityId } from '@truco/bots';
+import { decideAction, PERSONALITIES, SIGNALS, type PersonalityId, type SignalId } from '@truco/bots';
 import * as sfx from '../audio/sfx.ts';
 import type { Hud } from '../hud/hud.ts';
 import type { Stage } from '../scene/stage.ts';
+import { SignalDirector } from './signals.ts';
 import { betLine, line } from './voice.ts';
 
 const HUMAN: Seat = 0;
@@ -50,11 +51,55 @@ export class Controller {
   private watchdog = 0;
   /** Multiplica os atrasos (testes automatizados usam valor baixo). */
   speed = 1;
+  readonly signals: SignalDirector;
 
   constructor(
     private readonly stage: Stage,
     private readonly hud: Hud,
-  ) {}
+  ) {
+    this.signals = new SignalDirector({
+      getState: () => this.state ?? null,
+      speed: () => this.speed,
+      personalityOf: (seat) => PLAYERS[seat].personality ?? 'equilibrado',
+      nameOf: (seat) => PLAYERS[seat].name,
+      setGaze: (seat, target) => this.stage.setGaze(seat, target),
+      gesture: (seat, sig) => this.stage.gesture(seat, sig),
+      onWatchingChange: (seat, watching) => this.hud.setWatching(seat, watching),
+      onHumanSignal: (sig, caught) => this.onHumanSignalDone(sig, caught),
+      onBotSignal: (seat, sig, caught) => this.onBotSignalDone(seat, sig, caught),
+    });
+  }
+
+  // ---------- sinais ----------
+
+  onSignal(sig: SignalId) {
+    if (!this.state) return;
+    if (!this.signals.humanSignal(sig)) {
+      const mode = this.state.hand.mode;
+      this.hud.toast(mode !== 'normal' ? 'Nessa mão não tem sinal.' : 'Calma, espera um pouquinho pra sinalizar de novo.', 'info', 1400);
+    }
+    this.refresh();
+  }
+
+  private onHumanSignalDone(sig: SignalId, caught: Seat[]) {
+    const info = SIGNALS[sig];
+    this.hud.say(HUMAN, `${info.emoji} você ${info.gesture}`, false, 1500);
+    if (caught.length) {
+      const names = caught.map((s) => PLAYERS[s].name).join(' e ');
+      this.hud.toast(`${names} ${caught.length > 1 ? 'pegaram' : 'pegou'} seu sinal!`, 'bad', 2000);
+      this.hud.say(caught[0]!, line('caught'));
+    } else {
+      this.hud.toast(`${PLAYERS[2].name} viu seu sinal`, 'good', 1200);
+    }
+  }
+
+  private onBotSignalDone(seat: Seat, sig: SignalId, caught: Seat[]) {
+    this.hud.pop(seat, SIGNALS[sig].emoji);
+    const botCatcher = caught.find((s) => s !== HUMAN);
+    if (botCatcher !== undefined && Math.random() < 0.5) {
+      window.setTimeout(() => this.hud.say(botCatcher, line('caught')), 700);
+    }
+  }
 
   private delay(ms: number) {
     return sleep(ms * this.speed);
@@ -71,6 +116,7 @@ export class Controller {
     this.botToken++;
     this.botPending = false;
     this.startWatchdog();
+    this.signals.start();
     this.refresh();
     await this.run(events);
   }
@@ -131,12 +177,29 @@ export class Controller {
     await this.run(r.events);
   }
 
+  /** Evento sendo animado agora (diagnóstico de travamentos). */
+  currentAnim: { type: string; seat?: number; since: number } | null = null;
+
   private async run(events: GameEvent[]) {
     this.busy = true;
     this.stage.setInteractive(false);
     this.hud.hideModal();
-    for (const e of events) await this.animate(e);
-    this.busy = false;
+    try {
+      for (const e of events) {
+        this.currentAnim = { type: e.type, seat: 'seat' in e ? e.seat : undefined, since: performance.now() };
+        // Rede de segurança: uma animação nunca pode travar o jogo.
+        let timer = 0;
+        const timeout = new Promise<'timeout'>((r) => (timer = window.setTimeout(() => r('timeout'), 10000)));
+        const res = await Promise.race([this.animate(e).then(() => 'ok' as const), timeout]);
+        clearTimeout(timer);
+        if (res === 'timeout') console.warn('Animação travou e foi pulada:', e.type, JSON.stringify(e));
+      }
+    } catch (err) {
+      console.error('Erro ao animar evento', this.currentAnim, err);
+    } finally {
+      this.currentAnim = null;
+      this.busy = false;
+    }
     this.refresh();
     this.schedule();
   }
@@ -195,7 +258,13 @@ export class Controller {
       let action: Action;
       try {
         const legal = getLegalActions(st, seat);
-        action = decideAction(getPlayerView(st, seat), legal, PERSONALITIES[player.personality ?? 'equilibrado']);
+        action = decideAction(
+          getPlayerView(st, seat),
+          legal,
+          PERSONALITIES[player.personality ?? 'equilibrado'],
+          Math.random,
+          this.signals.knowledgeFor(seat),
+        );
       } catch (err) {
         console.error('Erro na decisão do bot', seat, err);
         action = getLegalActions(st, seat)[0]!;
@@ -261,6 +330,7 @@ export class Controller {
         this.stage.setTurn(null);
         this.refresh();
         await this.stage.deal(e.dealer, this.view.myHand, () => sfx.cardSlide());
+        this.signals.onHandStarted();
         if (e.mode === 'mao_de_10') {
           this.hud.toast(e.maoDe10Team === usTeam ? 'Mão de 10! Nós decidimos.' : 'Mão de 10 deles!', 'info', 1800);
           if (e.maoDe10Team === usTeam) this.hud.say(2, line('mao10'));
@@ -283,6 +353,7 @@ export class Controller {
           this.stage.setTurn(e.seat);
           await this.stage.playBot(e.seat, e.card, e.faceDown);
         }
+        this.signals.onCardPlayed(e.seat, e.card, this.state.hand.hands[e.seat]!.length);
         sfx.cardSnap(isZap);
         if (isZap) {
           this.stage.shake(1.4);
@@ -302,6 +373,7 @@ export class Controller {
         this.hud.setRoundDot(e.round, e.winner, usTeam);
         if (e.winner === 'tie') this.hud.say(e.winningSeat ?? 0, line('canga'));
         await this.stage.collectRound(e.winningSeat, e.winner === 'tie', winnerIndex);
+        if (this.state.phase === 'playing' && this.state.hand.currentRound > e.round) this.signals.onRoundStarted();
         break;
       }
 
@@ -355,6 +427,7 @@ export class Controller {
 
       case 'match_ended': {
         const win = e.winner === usTeam;
+        this.signals.onMatchEnded();
         sfx.jingle(win);
         await this.delay(600);
         this.hud.showEnd(win, e.scores[usTeam], e.scores[1 - usTeam]!, e.capote);
@@ -382,6 +455,7 @@ export class Controller {
     } else if (view.phase === 'mao_de_10_decision') {
       status = view.maoDe10Team === view.team ? 'Mão de 10: decida' : 'Eles estão decidindo a Mão de 10...';
     }
-    this.hud.render(view, { myTurn, canTruco, trucoLabel, canCover, coverOn: this.coverOn, status });
+    const canSignal = view.mode === 'normal' && (view.phase === 'playing' || view.phase === 'bet_response');
+    this.hud.render(view, { myTurn, canTruco, trucoLabel, canCover, coverOn: this.coverOn, status, canSignal });
   }
 }

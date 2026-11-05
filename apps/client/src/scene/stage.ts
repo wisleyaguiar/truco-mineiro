@@ -2,8 +2,9 @@
 import * as THREE from 'three';
 import gsap from 'gsap';
 import type { Card, Seat } from '@truco/engine';
+import type { SignalId } from '@truco/bots';
 import { backTex, faceTexture } from './cardArt.ts';
-import { buildAvatar, type Avatar } from './avatar.ts';
+import { buildAvatar, lookToward, playGesture, startIdle, type Avatar } from './avatar.ts';
 import { buildEnvironment, TABLE_Y } from './environment.ts';
 
 const CW = 0.085;
@@ -136,6 +137,7 @@ export class Stage {
       const av = buildAvatar(shirt, skin, hat);
       this.scene.add(av.root);
       this.avatars.set(seat, av);
+      startIdle(av);
     }
     this.placeAvatars(false);
   }
@@ -150,6 +152,7 @@ export class Stage {
       av.root.position.set(x, 0, z);
       av.root.lookAt(0, 0, 0);
     }
+    for (const [seat, target] of this.gazeTargets ?? []) this.setGaze(seat, target);
   }
 
   private resize() {
@@ -498,10 +501,49 @@ export class Stage {
     tl.to(this.shakeOffset, { x: 0, y: 0, z: 0, duration: 0.06 });
   }
 
-  /** Cabeça do avatar balança (fala / grito). */
+  /** Cabeça do avatar balança (fala / grito), a partir do olhar atual. */
   nod(seat: Seat, strong = false) {
     const av = this.avatars.get(seat);
     if (!av) return;
-    gsap.fromTo(av.head.rotation, { x: 0 }, { x: strong ? 0.28 : 0.14, duration: 0.12, yoyo: true, repeat: strong ? 3 : 1 });
+    const base = av.gaze.pitch;
+    gsap.fromTo(
+      av.head.rotation,
+      { x: base },
+      { x: base + (strong ? 0.28 : 0.14), duration: 0.12, yoyo: true, repeat: strong ? 3 : 1, onComplete: () => void (av.head.rotation.x = base) },
+    );
+  }
+
+  // ---------- Sinais e olhar ----------
+
+  private gazeTargets = new Map<Seat, Seat | null>();
+
+  /** Ponto (mundo) da "cabeça" de um assento. Você (0) = posição da câmera. */
+  seatPoint(seat: Seat): THREE.Vector3 {
+    if (seat === 0) return this.basePos.clone();
+    const v = new THREE.Vector3();
+    this.avatars.get(seat)!.head.getWorldPosition(v);
+    return v;
+  }
+
+  /** Bot vira a cabeça para outro assento (null = olha a mesa). */
+  setGaze(seat: Seat, target: Seat | null) {
+    const av = this.avatars.get(seat);
+    if (!av) return;
+    this.gazeTargets.set(seat, target);
+    av.root.updateWorldMatrix(true, true);
+    lookToward(av, target === null ? null : this.seatPoint(target));
+  }
+
+  /** Executa o gesto do sinal no avatar do assento. */
+  gesture(seat: Seat, signal: SignalId, freezeAt?: number): Promise<void> {
+    const av = this.avatars.get(seat);
+    return av ? playGesture(av, signal, freezeAt) : Promise.resolve();
+  }
+
+  /** Posição em tela do rosto de um assento (para testes/zoom). */
+  faceScreen(seat: Seat): { x: number; y: number } {
+    const v = this.seatPoint(seat).project(this.camera);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
 }

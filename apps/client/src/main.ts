@@ -25,6 +25,7 @@ const hud = new Hud(app, {
   onToggleCover: () => controller.onToggleCover(),
   onRespond: (r) => controller.onRespond(r),
   onMao10: (p) => controller.onMao10(p),
+  onSignal: (s) => controller.onSignal(s),
   onToggleMute: () => {
     sfx.setMuted(!sfx.isMuted());
     return sfx.isMuted();

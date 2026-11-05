@@ -16,7 +16,7 @@ npm run dev        # abre em http://localhost:5173
 Outros comandos:
 
 ```bash
-npm test           # testes do motor de regras + simulação de 1.000 partidas bot vs bot
+npm test           # motor de regras, sinais e simulações bot vs bot
 npm run typecheck  # TypeScript em todos os pacotes
 npm run build      # build de produção em apps/client/dist
 node scripts/e2e.cjs http://localhost:5173/   # joga uma partida inteira no Chromium (Playwright) e salva screenshots
@@ -28,7 +28,7 @@ node scripts/e2e.cjs http://localhost:5173/   # joga uma partida inteira no Chro
 
 ```
 packages/engine   Regras puras em TypeScript, sem dependências. Pronto para rodar num servidor autoritativo.
-packages/bots     IA heurística com 3 personalidades (Equilibrado, Zé do Blefe, Mineiro Desconfiado).
+packages/bots     IA heurística com 3 personalidades + regras dos sinais secretos (olhar, interceptação, memória).
 apps/client       Vite + Three.js + GSAP. Cena 3D, HUD em DOM/CSS, sons sintetizados.
 docs/             PRD original + decisões de regra.
 scripts/e2e.cjs   Teste ponta a ponta no navegador.
@@ -48,7 +48,8 @@ O cliente só conversa com o motor por essas funções. Para o modo online, bast
 - Clique na carta para jogar. Botão direito (ou o botão **Coberta**) joga virada, a partir da 2ª rodada.
 - **TRUCO!** (atalho `T`) pede truco. O botão vira SEIS / DEZ / DOZE conforme a mão sobe.
 - `C` liga/desliga a carta coberta.
+- **Sinais** (ou teclas `1`–`6`): sinal secreto pro parceiro. Se o 👁 do adversário estiver aceso, ele está te olhando e pega o sinal.
 
-## O que ficou fora do MVP
+## O que ainda está fora
 
-Online/multiplayer, sinais secretos e expressões faciais, vozes gravadas, ranking, duplas e campeonatos. Veja `docs/DECISOES.md`.
+Online/multiplayer, vozes gravadas, ranking, duplas e campeonatos. Veja `docs/DECISOES.md`.
