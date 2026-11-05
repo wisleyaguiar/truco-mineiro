@@ -12,6 +12,10 @@ export interface HudHandlers {
   onMao10: (play: boolean) => void;
   onToggleMute: () => boolean;
   onSignal: (s: SignalId) => void;
+  /** Abre o menu do modo online (login, apelido, partida, histórico). */
+  onOnline: () => void;
+  /** Volta para a tela inicial. */
+  onMenu: () => void;
 }
 
 export interface HudState {
@@ -299,6 +303,21 @@ export class Hud {
     this.toastTimer = window.setTimeout(() => (this.toastEl.className = 'toast'), ms);
   }
 
+  /** Abre um painel genérico (usado pelo menu online). */
+  panel(html: string, cls = '') {
+    return this.openModal(html, cls);
+  }
+
+  /** Nova mão (online): limpa as bolinhas e mostra o valor inicial. */
+  resetHand(value: number) {
+    for (let i = 0; i < 3; i++) this.dots[i]!.className = '';
+    this.valueEl.textContent = String(value);
+  }
+
+  setValueText(text: string) {
+    this.valueEl.textContent = text;
+  }
+
   private openModal(html: string, cls = '') {
     this.modal.className = `modal ${cls}`;
     this.modal.innerHTML = `<div class="panel">${html}</div>`;
@@ -353,7 +372,7 @@ export class Hud {
     });
   }
 
-  showStart() {
+  showStart(online = false) {
     const p = this.openModal(
       `<h1>Zap <span>&</span> Copeta</h1>
        <p class="sub">Truco Mineiro · Manilha Velha</p>
@@ -365,13 +384,19 @@ export class Hud {
          <li>Clique na carta pra jogar. Botão direito (ou <b>Coberta</b>) joga virada, a partir da 2ª rodada.</li>
          <li><b>Sinais</b> (teclas 1–6): 😉 Zap · 😗 Copeta · 😛 Espadilha · 🤷 Pica-fumo · ✋ Três · 😑 Cego. Se um adversário estiver te olhando (👁 aceso), ele pega o sinal!</li>
        </ul>
-       <div class="row"><button class="btn truco big" data-go>Bora jogar!</button></div>`,
+       <div class="row">
+         <button class="btn truco big" data-go>Bora jogar!</button>
+         ${online ? '<button class="btn big" data-online>Jogar online</button>' : ''}
+       </div>
+       ${online ? '<p class="hint-small">Online: entre com seu e-mail, jogue pelo servidor e veja seu histórico. Offline não precisa de cadastro.</p>' : ''}`,
       'start',
     );
     p.querySelector<HTMLButtonElement>('[data-go]')!.onclick = () => {
       this.hideModal();
       this.h.onStart();
     };
+    const on = p.querySelector<HTMLButtonElement>('[data-online]');
+    if (on) on.onclick = () => this.h.onOnline();
   }
 
   showEnd(win: boolean, us: number, them: number, capote: boolean) {
@@ -379,12 +404,16 @@ export class Hud {
       `<h1>${win ? 'Ganhamos a queda!' : 'Perdemos a queda...'}</h1>
        ${capote ? `<p class="capote">${win ? 'CAPOTE! 12 a 0!' : 'Levamos capote...'}</p>` : ''}
        <p class="final">Nós <b>${us}</b> × <b>${them}</b> Eles</p>
-       <div class="row"><button class="btn truco big" data-again>Jogar de novo</button></div>`,
+       <div class="row">
+         <button class="btn truco big" data-again>Jogar de novo</button>
+         <button class="btn ghost" data-menu>Menu</button>
+       </div>`,
       `end ${win ? 'win' : 'lose'}`,
     );
     p.querySelector<HTMLButtonElement>('[data-again]')!.onclick = () => {
       this.hideModal();
       this.h.onRestart();
     };
+    p.querySelector<HTMLButtonElement>('[data-menu]')!.onclick = () => this.h.onMenu();
   }
 }

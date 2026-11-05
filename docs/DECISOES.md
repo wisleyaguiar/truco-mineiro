@@ -31,6 +31,19 @@ O PRD (`docs/PRD.md`) tinha pontos ambíguos ou contraditórios. Abaixo está o 
 | Seus sinais | Botão **Sinais** (roda) ou teclas 1–6, com intervalo de 2 s entre sinais. Só em mão normal (não na Mão de 10 nem na Mão de Ferro). Você vê um balão "😉 você piscou", porque não vê o próprio rosto. |
 | Sinais dos adversários | Os gestos aparecem nos avatares, com um emoji rápido perto do rosto. Cabe a você perceber e interpretar. |
 
+## Online (Fase 3a)
+
+| Tema | Decisão |
+|---|---|
+| Arquitetura | Supabase (Postgres + login) + uma função na Vercel (`/api`) que é a autoridade do jogo. Sem servidor dedicado. |
+| Embaralhamento | No online, o servidor embaralha com `crypto.getRandomValues`. A semente de 32 bits do offline seria previsível: dava para descobrir as cartas de todos testando sementes. |
+| Cartas escondidas | O estado completo fica numa tabela que nenhum cliente lê. A API devolve só a visão de cada jogador, e em cada distribuição só a própria mão. |
+| Bots no servidor | Depois da sua jogada, o servidor joga pelos bots até ser sua vez de novo e devolve os eventos com as pausas de "pensar" para o cliente animar. |
+| Uma partida ativa | Começar outra partida abandona a anterior (não conta estatística). Dá para continuar a ativa pelo menu. |
+| Login | Link mágico + código de 6 dígitos no mesmo e-mail (o código resolve quando o link abre em outro navegador). Exige SMTP próprio (ver `docs/ONLINE.md`). |
+| Sinais secretos | Só no offline por enquanto. |
+| Próximas etapas | 3b: salas com amigos, fila, timer de 15 s, bot assume quando alguém cai. 3c: duplas fixas, ELO, ligas e ranking. |
+
 ## Escopo
 
 Ainda fora: online, lobby e reconexão, vozes gravadas (as falas aparecem como balões de texto), ranking, duplas e campeonatos, e o timer de 15 s por jogada.

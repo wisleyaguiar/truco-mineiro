@@ -4,6 +4,9 @@
 
 Truco Mineiro (Manilha Velha) em 3D, jogável no navegador. Modo solo: você + 1 parceiro IA contra 2 IAs, com sinais secretos entre parceiros. Testado em celular e PC com animações fluidas.
 
+- **Offline:** sem cadastro, o jogo roda todo no navegador (com sinais secretos).
+- **Online (em construção, Fase 3):** login por e-mail, partida validada no servidor, estatísticas e histórico. Configuração em [`docs/ONLINE.md`](docs/ONLINE.md).
+
 ![Mesa](docs/screenshots/desktop.png)
 
 ## Rodar
@@ -12,7 +15,8 @@ Requer Node 20+.
 
 ```bash
 npm install
-npm run dev        # abre em http://localhost:5173
+npm run dev        # abre em http://localhost:5173 (modo offline)
+npm run dev:api    # API online local em memória (ver docs/ONLINE.md)
 ```
 
 Outros comandos:
@@ -20,7 +24,8 @@ Outros comandos:
 ```bash
 npm test           # motor de regras, sinais e simulações bot vs bot
 npm run typecheck  # TypeScript em todos os pacotes
-npm run build      # build de produção em apps/client/dist
+npm run build      # build do site em apps/client/dist
+npm run build:vercel  # site + função /api no formato da Vercel (.vercel/output)
 node scripts/e2e.cjs http://localhost:5173/   # joga uma partida inteira no Chromium (Playwright) e salva screenshots
 ```
 
@@ -41,6 +46,8 @@ Cada push no `main` publica automaticamente, e cada PR ganha uma URL de preview.
 ```
 packages/engine   Regras puras em TypeScript, sem dependências. Pronto para rodar num servidor autoritativo.
 packages/bots     IA heurística com 3 personalidades + regras dos sinais secretos (olhar, interceptação, memória).
+packages/server   API do modo online (Vercel) + store em memória/Supabase. Autoridade do jogo no servidor.
+supabase/         Migrações SQL (tabelas, RLS, funções).
 apps/client       Vite + Three.js + GSAP. Cena 3D, HUD em DOM/CSS, sons sintetizados.
 docs/             PRD original + decisões de regra.
 scripts/e2e.cjs   Teste ponta a ponta no navegador.
